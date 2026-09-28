@@ -660,3 +660,54 @@ symptom precisely.
 **Shipped as v1.0** (`versionName`/`versionCode` bumped, GitHub release
 published, non-prerelease) - the first release considered stable enough
 to leave the beta line, covering everything in this file since beta05.
+
+## v2.0: ultra-wide mode, rounded/feathered screen edges
+
+**New top-bar toggle: ultra-wide streaming.** Widens the requested
+`StreamConfiguration` resolution to a 21:9 aspect (same vertical quality
+tier, just wider), purely client-side - Sunshine/Apollo already just
+captures/encodes whatever resolution gets negotiated at connect time, so
+no server-side changes were needed to add the toggle itself. Resolution
+can only be negotiated once per connection, so flipping the toggle
+triggers a full reconnect (re-launches the stream with the same Intent
+extras) rather than resizing live.
+
+**Important host-side requirement, easy to miss**: this toggle only
+produces a genuinely wider *picture* if the host actually has something
+ultra-wide to capture. Sunshine/Apollo streams whatever the selected
+display's native output is - it does not stretch or crop to match
+whatever resolution the client asks for. So:
+- If the PC's real monitor is a normal 16:9 (or 4:3) display, turning on
+  Ultra-Wide here without doing anything else on the host will not
+  widen the field of view - you'll just get that same 16:9 image
+  letterboxed/pillarboxed into a wider frame, not a wider picture.
+- To actually get a wider picture, the host needs a **virtual display**
+  set to an ultra-wide (21:9 or wider) resolution, and Sunshine/Apollo
+  configured to capture *that* display for this client - not the
+  physical monitor.
+- The one exception: if the PC is already outputting to a real physical
+  ultra-wide monitor and that's the display being streamed, no virtual
+  display is needed - the source is already the right shape and this
+  toggle just matches the client's request to it.
+
+**Rounded, feathered screen edges + an ambient glow halo.** The floating
+screen's corners are now softly rounded (`SCREEN_CORNER_RADIUS_FRAC`) and
+its edges fade out over a wider band (`SCREEN_EDGE_FEATHER_FRAC`) rather
+than cutting off sharply, so the screen dissolves into the glow halo
+around it instead of showing a hard rectangle line. Implemented as a
+rounded-box SDF in the compositing shader, applied to the video quad's
+alpha (premultiplied to match the layer's
+`XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT` blend mode). The
+feather width was widened and the halo's own outward margin
+(`GLOW_MARGIN_FRAC`) nudged up to match, after the first pass read as
+still having a visible seam where the crisp video met the halo.
+
+**Landscape PC-select layout was missing the version number.** The
+portrait layout (`layout/activity_pc_view.xml`) already had a
+`versionLabel` reading `BuildConfig.VERSION_NAME` in the top-right
+corner; the landscape variant (`layout-land/activity_pc_view.xml`) - the
+one actually shown on a headset, since headsets run landscape - never
+had the matching view added, so the version number was invisible on
+every real device despite the code already being there to set it. Added
+it to the landscape layout too, sized at 16sp after an initial 11sp
+proved too small to read comfortably on-headset.

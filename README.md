@@ -24,13 +24,26 @@ capability beyond what Moonlight XR already does, it just makes the existing VR 
 to use day to day:
 
 - A redesigned in-VR top bar (Exit, passthrough brightness, screen curvature, a live 3D-effect
-  toggle), with a screen-edge ambient glow that picks up colour from the streamed content itself
+  toggle, Ultra-Wide), with a screen-edge ambient glow that picks up colour from the streamed
+  content itself, feathering softly into the screen's own edges instead of a hard cutoff
+- Ultra-wide streaming mode — widens the requested stream resolution to a 21:9 picture. **Needs a
+  matching ultra-wide source on the host to actually widen the field of view**: either a virtual
+  display set to an ultra-wide resolution on the PC (with Sunshine/Apollo capturing that display),
+  or an already-ultra-wide physical monitor being streamed. Without either, this just letterboxes
+  the normal 16:9 picture into a wider frame rather than showing more of the screen.
 - A rounded-card PC-select screen with favorites (hold a card for 2 seconds to pin it)
 - An in-VR laser pointer restyled to match Quest's own system pointer more closely
 - A number of smaller fixes found through actual on-headset testing — the detailed history is in
   [`docs/DEVLOG.md`](docs/DEVLOG.md)
 
 Built and tested primarily on Quest 3.
+
+## Screenshots
+
+Ultra-wide mode, streaming Steam Big Picture, showing the rounded/feathered screen edge dissolving
+into the ambient glow halo:
+
+![Ultra-wide streaming with feathered glow edge](store-assets/screenshot-ultrawide.jpg)
 
 ## Requirements
 

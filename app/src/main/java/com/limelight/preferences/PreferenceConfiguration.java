@@ -63,6 +63,12 @@ public class PreferenceConfiguration {
     // and stays independent of this. Also written live by the top bar's
     // 3D-effect icon in VR, not just the flat Settings screen.
     public static final String VR_DEPTH_EFFECT_PREF_STRING = "checkbox_vr_depth_effect";
+    // No flat Settings-screen entry - this is only ever set via the top bar's
+    // toggle in VR (XrRenderer/Game trigger a reconnect to actually apply a
+    // new resolution, since it can't change mid-stream). Client-only: the
+    // host just gets asked to capture/encode a wider resolution at connect
+    // time, same as picking any other resolution - no server code changes.
+    public static final String VR_ULTRAWIDE_PREF_STRING = "vr_ultrawide";
     private static final String VR_EYE_SWAP_PREF_STRING = "checkbox_vr_eye_swap";
     private static final String VR_POINTER_PREF_STRING = "checkbox_vr_pointer";
     private static final String VR_GAZE_PREF_STRING = "checkbox_vr_gaze";
@@ -130,6 +136,7 @@ public class PreferenceConfiguration {
     private static final int DEFAULT_VR_SCREEN_SIZE = 30;
     private static final int DEFAULT_VR_CURVATURE = 0;
     private static final boolean DEFAULT_VR_DEPTH_EFFECT = true;
+    private static final boolean DEFAULT_VR_ULTRAWIDE = false;
     private static final String DEFAULT_VR_DEPTH_SOURCE = "model";
     private static final boolean DEFAULT_VR_EYE_SWAP = false;
     // On by default for new installs; the checkbox is sticky after that —
@@ -204,6 +211,11 @@ public class PreferenceConfiguration {
     // 0 to 100
     public int vrCurvature;
     public boolean vrDepthEffect;
+    // Client-only: widens the requested stream resolution to a 21:9 aspect
+    // at connect time (see Game.java's StreamConfiguration setup). No server
+    // changes needed - Sunshine/Apollo/GFE already just capture and encode
+    // whatever resolution gets negotiated.
+    public boolean vrUltrawide;
     // 0 off, 1 flat, 2 ramp, 3 blob, 4 eye test, 5 shift test, 6 depth model
     public int vrDepthMode;
     public boolean vrEyeSwap;
@@ -676,6 +688,7 @@ public class PreferenceConfiguration {
         config.vrScreenSize = prefs.getInt(VR_SCREEN_SIZE_PREF_STRING, DEFAULT_VR_SCREEN_SIZE);
         config.vrCurvature = prefs.getInt(VR_CURVATURE_PREF_STRING, DEFAULT_VR_CURVATURE);
         config.vrDepthEffect = prefs.getBoolean(VR_DEPTH_EFFECT_PREF_STRING, DEFAULT_VR_DEPTH_EFFECT);
+        config.vrUltrawide = prefs.getBoolean(VR_ULTRAWIDE_PREF_STRING, DEFAULT_VR_ULTRAWIDE);
         String depthSource = prefs.getString(VR_DEPTH_SOURCE_PREF_STRING, DEFAULT_VR_DEPTH_SOURCE);
         if (depthSource.equals("flat")) {
             config.vrDepthMode = 1;

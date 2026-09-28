@@ -154,7 +154,12 @@ public class XrRenderer implements SurfaceTexture.OnFrameAvailableListener {
     // Glow on/off, next to the brightness slider - only meaningful (and
     // only hit-tested natively) while that slider is open
     private static final int IN_GLOW_TOGGLE = 30;
-    private static final int IN_SLOTS = 31;
+    // Top bar ultra-wide button, pressed this frame - a request to flip it,
+    // same fire-and-forget shape as IN_KEYBOARD_TOGGLE. Unlike the other
+    // toggles this always routes to the InputListener (Game), never handled
+    // locally, since it needs a reconnect, not just a render-side flag flip.
+    private static final int IN_ULTRAWIDE_TOGGLE = 31;
+    private static final int IN_SLOTS = 32;
     private static final int POSE_VALUES = 9;
     private final float[] inputState = new float[IN_SLOTS];
     private int heldButtons;
@@ -170,15 +175,21 @@ public class XrRenderer implements SurfaceTexture.OnFrameAvailableListener {
     private final AtomicReference<ByteBuffer> pendingTopBarArt = new AtomicReference<>();
     // Keyboard icon pulled for now - see the matching comment in
     // xr_renderer.c next to TOPBAR_ITEM_COUNT for why.
-    private static final int TOPBAR_ITEM_COUNT = 4;
+    private static final int TOPBAR_ITEM_COUNT = 5;
     private static final int TOPBAR_EXIT_INDEX = 0;
     private static final int TOPBAR_BRIGHTNESS_INDEX = 1;
     private static final int TOPBAR_CURVE_INDEX = 2;
     private static final int TOPBAR_DEPTH_INDEX = 3;
+    private static final int TOPBAR_ULTRAWIDE_INDEX = 4;
     // Live 3D-effect state - toggled from the top bar, started from
     // PreferenceConfiguration.VR_DEPTH_EFFECT_PREF_STRING. Read by
     // buildTopBarArt() to pick which of the two icon variants to draw.
     private volatile boolean depthEffectOn = true;
+    // Ultra-wide is fixed for the life of this XrRenderer instance (a
+    // reconnect is required to change it - see onVrUltrawideToggleRequested
+    // in Game.java), so this is only ever read once at session start to pick
+    // the right icon; the toggle itself never flips this field directly.
+    private boolean ultrawideOn = false;
     // True unless the advanced "Realtime 3D mode" list was explicitly set
     // to a debug test pattern - those don't run the real inference thread,
     // so the top bar's toggle only starts/stops it when this is true.
@@ -210,6 +221,11 @@ public class XrRenderer implements SurfaceTexture.OnFrameAvailableListener {
         // Top menu bar keyboard button - shows/hides the system soft
         // keyboard, same as the existing flat-mode gesture.
         void onVrKeyboardToggleRequested();
+        // Top menu bar ultra-wide toggle. Resolution is fixed for the life
+        // of a connection, so unlike the other top-bar toggles this can't
+        // just flip a rendering flag in place - the listener (Game) has to
+        // tear down and reconnect at the new width.
+        void onVrUltrawideToggleRequested();
         // Desktop audio balance/gain relative to the user's head and the
         // centre screen. Always (0, 1) outside Productivity mode.
         void onVrSpatialAudio(float pan, float gain);
@@ -284,6 +300,7 @@ public class XrRenderer implements SurfaceTexture.OnFrameAvailableListener {
                 prefsContext = activity.getApplicationContext();
                 restoreScreenPose();
                 depthEffectOn = prefs.vrDepthEffect;
+                ultrawideOn = prefs.vrUltrawide;
                 pendingTopBarArt.set(toBuffer(buildTopBarArt()));
                 nativeSetPassthroughLevel(nativeCtx, PreferenceManager
                         .getDefaultSharedPreferences(prefsContext)
@@ -635,6 +652,8 @@ public class XrRenderer implements SurfaceTexture.OnFrameAvailableListener {
         drawIcon(canvas, R.drawable.ic_topbar_curve, cellRect(TOPBAR_CURVE_INDEX));
         drawIcon(canvas, depthEffectOn ? R.drawable.ic_topbar_3d_on : R.drawable.ic_topbar_3d_off,
                 cellRect(TOPBAR_DEPTH_INDEX));
+        drawIcon(canvas, ultrawideOn ? R.drawable.ic_topbar_ultrawide_on : R.drawable.ic_topbar_ultrawide_off,
+                cellRect(TOPBAR_ULTRAWIDE_INDEX));
 
         return strip;
     }
@@ -733,6 +752,10 @@ public class XrRenderer implements SurfaceTexture.OnFrameAvailableListener {
 
         if (inputState[IN_KEYBOARD_TOGGLE] != 0.0f && inputListener != null) {
             inputListener.onVrKeyboardToggleRequested();
+        }
+
+        if (inputState[IN_ULTRAWIDE_TOGGLE] != 0.0f && inputListener != null) {
+            inputListener.onVrUltrawideToggleRequested();
         }
 
         if (inputState[IN_DEPTH_TOGGLE] != 0.0f) {

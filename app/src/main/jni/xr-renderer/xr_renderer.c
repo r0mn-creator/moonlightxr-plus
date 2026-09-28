@@ -133,7 +133,11 @@
 // Glow on/off, next to the brightness slider - only meaningful (and only
 // hit-tested) while that slider is open
 #define IN_GLOW_TOGGLE 30
-#define IN_SLOTS    31
+// Top bar ultra-wide button, pressed this frame - same fire-and-forget shape
+// as IN_KEYBOARD_TOGGLE. Always routed to Java's InputListener, never
+// handled natively, since widening the stream needs a full reconnect.
+#define IN_ULTRAWIDE_TOGGLE 31
+#define IN_SLOTS    32
 
 // Grab thresholds for the grip, and the range a resize is allowed to reach
 #define SCREEN_MIN_WIDTH 0.8f
@@ -262,6 +266,20 @@
 // the local detail on top of it. About a tenth of the frame.
 #define DEPTH_LOWPASS_RADIUS 11
 
+// Fraction of the shorter frame dimension used as the floating screen's
+// corner radius - subtle by design ("slightly rounded"), scales with
+// resolution instead of a fixed pixel count so it looks the same relative
+// size from 360p up through ultra-wide 4K.
+#define SCREEN_CORNER_RADIUS_FRAC 0.03f
+// Width of the soft fade band at the screen's boundary (corners and straight
+// edges alike), same shorter-dimension-relative scaling as the radius above
+// so a hard cutoff becomes a gradual feather into passthrough instead.
+// Widened from an initial 0.015 - that was too subtle to read as anything
+// but a crisp edge once the glow halo picked up right where it left off;
+// this is meant to visibly dissolve the video's own last few percent into
+// the halo, not just antialias the corner.
+#define SCREEN_EDGE_FEATHER_FRAC 0.05f
+
 // Productivity mode, Phase 1: a fixed default arrangement for N flat
 // screens. No rotate/arrange controls yet (that is Phase 2) - these are
 // just sane constants so there is something to look at.
@@ -290,7 +308,7 @@
 // if a future Horizon OS build fixes it. Re-adding is just restoring
 // TOPBAR_ITEM_COUNT to 5, giving keyboard an index again, and putting its
 // draw call and hit-test block back (see git history for this commit).
-#define TOPBAR_ITEM_COUNT 4
+#define TOPBAR_ITEM_COUNT 5
 #define TOPBAR_EXIT_INDEX 0
 #define TOPBAR_BRIGHTNESS_INDEX 1
 #define TOPBAR_CURVE_INDEX 2
@@ -302,6 +320,10 @@
 #define CURVE_RADIUS_MAX_MULT 4.0f
 #define CURVE_RADIUS_MIN_MULT 0.6f
 #define TOPBAR_DEPTH_INDEX 3
+// Client-only wide-resolution toggle - see Game.java's
+// onVrUltrawideToggleRequested() for why this one triggers a full reconnect
+// instead of flipping a render-side flag like the other toggles here.
+#define TOPBAR_ULTRAWIDE_INDEX 4
 // ctx->openSlider when no slider is open - not a real item index
 #define TOPBAR_NO_SLIDER (-1)
 #define TOPBAR_WIDTH_M (TOPBAR_ITEM_COUNT * TOPBAR_ITEM_SIZE_M \
@@ -369,7 +391,10 @@
 // read as a hard-edged block instead of a fade.
 #define GLOW_HALO_TEX 128
 // Shrunk from an initial 0.18 - still too big/overpowering at that size.
-#define GLOW_MARGIN_FRAC 0.10f
+// Nudged back up slightly from 0.10 to give the now-wider
+// SCREEN_EDGE_FEATHER_FRAC dissolve room to land in before the halo itself
+// fades out, rather than the two racing to zero at the same distance.
+#define GLOW_MARGIN_FRAC 0.13f
 
 typedef struct { float x, y, z; } Vec3;
 
@@ -539,6 +564,15 @@ typedef struct {
     GLint dispTexelsUniform;
     GLint lowResWidthUniform;
     GLint frameWidthUniform;
+    // Separate from frameWidthUniform above (which is the depth-reprojection
+    // texel-stepping width and, in Productivity mode, deliberately the WHOLE
+    // swapchain width, not one screen's share of it). This pair is the
+    // actual per-draw-call frame size in pixels, used only for the rounded-
+    // corner mask - in Productivity mode that's one column's width, not the
+    // full swapchain.
+    GLint roundFrameSizeUniform;
+    GLint cornerRadiusUniform;
+    GLint edgeFeatherUniform;
     GLuint fbo;
     int barTestFramesLogged;
 
@@ -873,6 +907,14 @@ static const char* FRAGMENT_SRC =
     "uniform float u_dispTexels;\n"
     "uniform float u_lowResWidth;\n"
     "uniform float u_frameWidth;\n"
+    // Separate from u_frameWidth (that one is deliberately the full
+    // swapchain width in Productivity mode - see roundFrameSizeUniform's
+    // comment at its declaration). Radius of 0 disables the mask entirely.
+    "uniform vec2 u_roundFrameSize;\n"
+    "uniform float u_cornerRadiusPx;\n"
+    // Half-width (pixels) of the soft fade band centred on the rounded-rect
+    // boundary - 0 falls back to a bare ~1px antialiasing edge.
+    "uniform float u_edgeFeatherPx;\n"
     "out vec4 fragColor;\n"
     "void main() {\n"
     "    float d = texture(u_depth, v_plain).a;\n"
@@ -915,6 +957,22 @@ static const char* FRAGMENT_SRC =
     "    }\n"
     "    fragColor = texture(u_texture, (u_texmatrix * vec4(tc, 0.0, 1.0)).xy);\n"
     "    fragColor.rgb *= u_tint;\n"
+    // Standard rounded-box signed distance field (Inigo Quilez's formula),
+    // worked in physical pixels via u_roundFrameSize so a corner stays a
+    // true circle rather than an ellipse on a non-square (e.g. ultra-wide)
+    // frame. The layer's blend mode expects premultiplied alpha, so both
+    // rgb and a get scaled together - see the layerFlags comment at the
+    // quad/cylinder submission site.
+    "    if (u_cornerRadiusPx > 0.0) {\n"
+    "        vec2 pos = v_plain * u_roundFrameSize;\n"
+    "        vec2 halfSize = u_roundFrameSize * 0.5;\n"
+    "        vec2 cornerRel = abs(pos - halfSize) - (halfSize - u_cornerRadiusPx);\n"
+    "        float dist = length(max(cornerRel, 0.0)) - u_cornerRadiusPx;\n"
+    "        float feather = max(u_edgeFeatherPx, 1.0);\n"
+    "        float edgeAlpha = 1.0 - smoothstep(-feather, feather, dist);\n"
+    "        fragColor.rgb *= edgeAlpha;\n"
+    "        fragColor.a *= edgeAlpha;\n"
+    "    }\n"
     "}\n";
 
 // Joint bilateral upsample of the depth map. The model output is 256x256
@@ -1715,6 +1773,9 @@ static int initGl(XrCtx* ctx) {
     ctx->dispTexelsUniform = glGetUniformLocation(ctx->program, "u_dispTexels");
     ctx->lowResWidthUniform = glGetUniformLocation(ctx->program, "u_lowResWidth");
     ctx->frameWidthUniform = glGetUniformLocation(ctx->program, "u_frameWidth");
+    ctx->roundFrameSizeUniform = glGetUniformLocation(ctx->program, "u_roundFrameSize");
+    ctx->cornerRadiusUniform = glGetUniformLocation(ctx->program, "u_cornerRadiusPx");
+    ctx->edgeFeatherUniform = glGetUniformLocation(ctx->program, "u_edgeFeatherPx");
 
     // Sampler units are fixed: color on 0, depth on 1
     glUseProgram(ctx->program);
@@ -4074,6 +4135,16 @@ static int updateTopBar(XrCtx* ctx, XrPosef* aims, const int* valid, float* out)
             return 1;
         }
 
+        if (screenProject(aims[h], topBarItemPose(ctx, TOPBAR_ULTRAWIDE_INDEX, TOPBAR_ITEM_COUNT),
+                          TOPBAR_ITEM_SIZE_M, TOPBAR_ITEM_SIZE_M, 0.0f, 0, &u, &v)
+                && u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f) {
+            if (ctx->triggerEdge[h]) {
+                out[IN_ULTRAWIDE_TOGGLE] = 1.0f;
+                fireHaptic(ctx, h);
+            }
+            return 1;
+        }
+
         if (ctx->openSlider == TOPBAR_BRIGHTNESS_INDEX
                 && screenProject(aims[h], topBarGlowTogglePose(ctx),
                                  GLOW_TOGGLE_SIZE_M, GLOW_TOGGLE_SIZE_M, 0.0f, 0, &u, &v)
@@ -5087,6 +5158,14 @@ static void renderVideoFrame(XrCtx* ctx, const float* texMatrix, float separatio
         // Game.java's width*3 request), not any one screen's actual decoded
         // resolution - each screen negotiates its own independently.
         float colWidth = (float)ctx->videoWidth / PRODUCTIVITY_SCREEN_COUNT;
+        // Per-column frame size, not ctx->videoWidth above (that one is the
+        // whole swapchain, deliberately, for the depth-reprojection math) -
+        // each of the 3 screens gets its own independently rounded corners.
+        glUniform2f(ctx->roundFrameSizeUniform, colWidth, (float)ctx->videoHeight);
+        glUniform1f(ctx->cornerRadiusUniform,
+                    fminf(colWidth, (float)ctx->videoHeight) * SCREEN_CORNER_RADIUS_FRAC);
+        glUniform1f(ctx->edgeFeatherUniform,
+                    fminf(colWidth, (float)ctx->videoHeight) * SCREEN_EDGE_FEATHER_FRAC);
         for (int i = 0; i < PRODUCTIVITY_SCREEN_COUNT; i++) {
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_EXTERNAL_OES, ctx->productivityOesTexture[i]);
@@ -5117,6 +5196,11 @@ static void renderVideoFrame(XrCtx* ctx, const float* texMatrix, float separatio
     glUniform1f(ctx->dispTexelsUniform, separation * ctx->upsampleWidth);
     glUniform1f(ctx->lowResWidthUniform, (float)ctx->upsampleWidth);
     glUniform1f(ctx->frameWidthUniform, (float)ctx->videoWidth);
+    glUniform2f(ctx->roundFrameSizeUniform, (float)ctx->videoWidth, (float)ctx->videoHeight);
+    glUniform1f(ctx->cornerRadiusUniform,
+                fminf((float)ctx->videoWidth, (float)ctx->videoHeight) * SCREEN_CORNER_RADIUS_FRAC);
+    glUniform1f(ctx->edgeFeatherUniform,
+                fminf((float)ctx->videoWidth, (float)ctx->videoHeight) * SCREEN_EDGE_FEATHER_FRAC);
 
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 16, VERTEX_DATA);
     glEnableVertexAttribArray(0);
@@ -5703,6 +5787,11 @@ Java_com_limelight_binding_video_XrRenderer_nativeEndFrame(JNIEnv* env, jobject 
             XrCompositionLayerQuad* quad = &prodQuadLayers[i];
             memset(quad, 0, sizeof(*quad));
             quad->type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+            // Alpha-blended so the shader's rounded-corner mask (see
+            // SCREEN_CORNER_RADIUS_FRAC) actually shows passthrough at the
+            // corners instead of opaque black - fragColor is premultiplied
+            // by that same mask in the shader to match this blend mode.
+            quad->layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
             quad->eyeVisibility = XR_EYE_VISIBILITY_BOTH;
             quad->subImage.swapchain = ctx->swapchain;
             quad->subImage.imageRect.offset.x = (int32_t)(i * colWidth);
@@ -5737,6 +5826,9 @@ Java_com_limelight_binding_video_XrRenderer_nativeEndFrame(JNIEnv* env, jobject 
                 XrCompositionLayerCylinderKHR* cyl = &cylLayers[eye];
                 memset(cyl, 0, sizeof(*cyl));
                 cyl->type = XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR;
+                // See the productivity quad's identical flag above for why -
+                // same rounded-corner mask, same premultiplied-alpha match.
+                cyl->layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
                 // Radius runs from 4x distance (slightly curved) down to the
                 // distance itself (wrapped around the viewer) as curvature rises
                 float radius = ctx->screenRadius;
@@ -5760,6 +5852,9 @@ Java_com_limelight_binding_video_XrRenderer_nativeEndFrame(JNIEnv* env, jobject 
                 XrCompositionLayerQuad* quad = &quadLayers[eye];
                 memset(quad, 0, sizeof(*quad));
                 quad->type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+                // See the productivity quad's identical flag above for why -
+                // same rounded-corner mask, same premultiplied-alpha match.
+                quad->layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
                 quad->eyeVisibility = visibility;
                 quad->subImage = subImage;
                 quad->space = space;

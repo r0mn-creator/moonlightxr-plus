@@ -67,6 +67,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.preference.PreferenceManager;
 import android.util.Rational;
 import android.view.Display;
 import android.view.InputDevice;
@@ -529,8 +530,21 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             }
         }
 
+        // Ultra-wide is client-only: keep the vertical resolution the user
+        // already picked in Settings (same encode/decode "quality tier"),
+        // just widen to a 21:9 aspect. Rounded to a multiple of 8 so the
+        // encoder never chokes on an odd macroblock-alignment width. The
+        // host doesn't need any code changes for this - Sunshine/Apollo/GFE
+        // already just capture and encode whatever resolution gets
+        // negotiated at connect time, same as picking any other resolution.
+        int streamWidth = prefConfig.width;
+        int streamHeight = prefConfig.height;
+        if (prefConfig.vrUltrawide) {
+            streamWidth = Math.round(streamHeight * 21f / 9f / 8f) * 8;
+        }
+
         StreamConfiguration config = new StreamConfiguration.Builder()
-                .setResolution(prefConfig.width, prefConfig.height)
+                .setResolution(streamWidth, streamHeight)
                 .setLaunchRefreshRate(prefConfig.fps)
                 .setRefreshRate(chosenFrameRate)
                 .setApp(app)
@@ -3057,6 +3071,32 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                finish();
+            }
+        });
+    }
+
+    @Override
+    public void onVrUltrawideToggleRequested() {
+        // Called from the render thread. Resolution is only ever negotiated
+        // once, at connect time (StreamConfiguration), so there's no way to
+        // widen an already-running stream in place - the only option is a
+        // full reconnect. Flip the persisted flag, then relaunch this same
+        // activity with its own original Intent (it already carries every
+        // extra needed to reach the same PC/app - host, ports, app id,
+        // unique id, cert, computer UUID - see onCreate()'s extras above),
+        // so the new instance's StreamConfiguration picks up the new width.
+        if (prefConfig.productivityMode) {
+            stopProductivitySession();
+        }
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                boolean newValue = !prefConfig.vrUltrawide;
+                PreferenceManager.getDefaultSharedPreferences(Game.this).edit()
+                        .putBoolean(PreferenceConfiguration.VR_ULTRAWIDE_PREF_STRING, newValue)
+                        .apply();
+                startActivity(new Intent(getIntent()));
                 finish();
             }
         });

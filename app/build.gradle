@@ -28,8 +28,8 @@ android {
         // (versionName "12.1-xr0.2") - versionCode must keep increasing from
         // there for in-place updates to keep working, regardless of the
         // versionName scheme used on top of it.
-        versionName "v1.0"
-        versionCode = 31409
+        versionName "v2.0"
+        versionCode = 31410
 
         // Generate native debug symbols to allow Google Play to symbolicate our native crashes
         ndk.debugSymbolLevel = 'FULL'

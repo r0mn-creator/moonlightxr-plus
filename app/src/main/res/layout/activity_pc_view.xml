@@ -224,7 +224,7 @@
         android:layout_marginTop="2dp"
         android:layout_marginEnd="14dp"
         android:layout_marginRight="14dp"
-        android:textSize="11sp"
+        android:textSize="16sp"
         android:textColor="@color/ml_text_faint"
         android:alpha="0.7"
         tools:text="beta04"/>
